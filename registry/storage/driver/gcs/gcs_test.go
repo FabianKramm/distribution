@@ -8,14 +8,15 @@ import (
 	"os"
 	"testing"
 
+	"cloud.google.com/go/storage"
 	dcontext "github.com/docker/distribution/context"
 	storagedriver "github.com/docker/distribution/registry/storage/driver"
 	"github.com/docker/distribution/registry/storage/driver/testsuites"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/cloud/storage"
-	"gopkg.in/check.v1"
+	"google.golang.org/api/option"
+	check "gopkg.in/check.v1"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -68,14 +69,28 @@ func init() {
 		ts = jwtConfig.TokenSource(dcontext.Background())
 	}
 
+	ctx := dcontext.Background()
+
+	// Create the http client from token source
+	httpClient := oauth2.NewClient(ctx, ts)
+
+	// Create the storage client with the token source
+	storageClient, err := storage.NewClient(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		panic(fmt.Sprintf("creating storage client error: %s", err))
+	}
+
 	gcsDriverConstructor = func(rootDirectory string) (storagedriver.StorageDriver, error) {
 		parameters := driverParameters{
-			bucket:        bucket,
-			rootDirectory: root,
-			email:         email,
-			privateKey:    privateKey,
-			client:        oauth2.NewClient(dcontext.Background(), ts),
-			chunkSize:     defaultChunkSize,
+			bucket:         bucket,
+			rootDirectory:  root,
+			email:          email,
+			privateKey:     privateKey,
+			ctx:            ctx,
+			httpClient:     httpClient,
+			storageClient:  storageClient,
+			chunkSize:      defaultChunkSize,
+			maxConcurrency: defaultMaxConcurrency,
 		}
 
 		return New(parameters)
@@ -307,5 +322,61 @@ func TestMoveDirectory(t *testing.T) {
 	err = driver.Move(ctx, "/parent/dir", "/parent/other")
 	if err == nil {
 		t.Fatalf("Moving directory /parent/dir /parent/other should have return a non-nil error\n")
+	}
+}
+
+// TestList tests the driver list functionality.
+// It creates a foo object and checks if driver.List returns the correct name and then deletes the object and checks if List returns
+// an error that the object is not found anymore
+func TestList(t *testing.T) {
+	if skipGCS() != "" {
+		t.Skip(skipGCS())
+	}
+
+	validRoot, err := ioutil.TempDir("", "driver-")
+	if err != nil {
+		t.Fatalf("unexpected error creating temporary directory: %v", err)
+	}
+	defer os.Remove(validRoot)
+
+	driver, err := gcsDriverConstructor(validRoot)
+	if err != nil {
+		t.Fatalf("unexpected error creating rooted driver: %v", err)
+	}
+
+	ctx := dcontext.Background()
+	contents := []byte("contents")
+	// Create a regular file.
+	err = driver.PutContent(ctx, "/parent/dir/foo", contents)
+	if err != nil {
+		t.Fatalf("unexpected error creating content: %v", err)
+	}
+	defer func() {
+		err := driver.Delete(ctx, "/parent")
+		if err != nil {
+			t.Fatalf("failed to remove /parent due to %v\n", err)
+		}
+	}()
+
+	// Check if list works in general
+	expectedNames := []string{"/parent/dir/foo"}
+	names, err := driver.List(ctx, "/parent/dir")
+	if err != nil {
+		t.Fatalf("failed to list /parent/dir due to %v", err)
+	}
+	if len(names) != 1 || names[0] != expectedNames[0] {
+		t.Fatalf("wrong list response expected %#v, got %#v", expectedNames, names)
+	}
+
+	err = driver.Delete(ctx, "/parent/dir/foo")
+	if err != nil {
+		t.Fatalf("unexpected error deleting /parent/dir/foo: %v", err)
+	}
+
+	// The driver returns an empty response as missing directory, since we don't actually
+	// have directories in Google Cloud Storage.
+	names, err = driver.List(ctx, "/parent/dir")
+	if err == nil {
+		t.Fatalf("/parent/dir is still not empty, even are deleting all contents: %#v", names)
 	}
 }
