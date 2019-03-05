@@ -672,7 +672,13 @@ func (d *driver) List(context context.Context, path string) ([]string, error) {
 		// DELETE and LIST operations. Check that the object is not deleted,
 		// and filter out any objects with a non-zero time-deleted
 		if object.Deleted.IsZero() && object.ContentType != uploadSessionContentType {
-			list = append(list, d.keyToPath(object.Name))
+			// If the object.Prefix is filled it is a directory, if object.Name is filled it is an object
+			// see https://github.com/googleapis/google-cloud-go/blob/master/storage/storage.go#L779
+			if object.Prefix != "" {
+				list = append(list, d.keyToPath(object.Prefix))
+			} else {
+				list = append(list, d.keyToPath(object.Name))
+			}
 		}
 	}
 	if path != "/" && len(list) == 0 {
@@ -721,7 +727,13 @@ func (d *driver) listAll(context context.Context, prefix string) ([]string, erro
 		// DELETE and LIST operations. Check that the object is not deleted,
 		// and filter out any objects with a non-zero time-deleted
 		if obj.Deleted.IsZero() {
-			list = append(list, obj.Name)
+			// If the obj.Prefix is filled it is a directory, if obj.Name is filled it is an object
+			// see https://github.com/googleapis/google-cloud-go/blob/master/storage/storage.go#L779
+			if obj.Prefix != "" {
+				list = append(list, obj.Prefix)
+			} else {
+				list = append(list, obj.Name)
+			}
 		}
 	}
 	return list, nil

@@ -86,7 +86,6 @@ func init() {
 			rootDirectory:  root,
 			email:          email,
 			privateKey:     privateKey,
-			ctx:            ctx,
 			httpClient:     httpClient,
 			storageClient:  storageClient,
 			chunkSize:      defaultChunkSize,
@@ -326,8 +325,9 @@ func TestMoveDirectory(t *testing.T) {
 }
 
 // TestList tests the driver list functionality.
-// It creates a foo object and checks if driver.List returns the correct name and then deletes the object and checks if List returns
-// an error that the object is not found anymore
+// Since there are no real directories in gcs, gcs fills the prefix property of the ObjectAttrs struct
+// when its a "directory" and the name property if its an object (see https://github.com/googleapis/google-cloud-go/blob/master/storage/storage.go#L779)
+// This test makes sure that objects and directories are correctly listed
 func TestList(t *testing.T) {
 	if skipGCS() != "" {
 		t.Skip(skipGCS())
@@ -358,25 +358,23 @@ func TestList(t *testing.T) {
 		}
 	}()
 
-	// Check if list works in general
-	expectedNames := []string{"/parent/dir/foo"}
-	names, err := driver.List(ctx, "/parent/dir")
+	// Check if list can list directories
+	expectedNames := []string{"/parent/dir"}
+	names, err := driver.List(ctx, "/parent")
 	if err != nil {
-		t.Fatalf("failed to list /parent/dir due to %v", err)
+		t.Fatalf("failed to list /parent due to %v", err)
 	}
 	if len(names) != 1 || names[0] != expectedNames[0] {
 		t.Fatalf("wrong list response expected %#v, got %#v", expectedNames, names)
 	}
 
-	err = driver.Delete(ctx, "/parent/dir/foo")
-	if err != nil {
-		t.Fatalf("unexpected error deleting /parent/dir/foo: %v", err)
-	}
-
-	// The driver returns an empty response as missing directory, since we don't actually
-	// have directories in Google Cloud Storage.
+	// Check if list can list objects
+	expectedNames = []string{"/parent/dir/foo"}
 	names, err = driver.List(ctx, "/parent/dir")
-	if err == nil {
-		t.Fatalf("/parent/dir is still not empty, even are deleting all contents: %#v", names)
+	if err != nil {
+		t.Fatalf("failed to list /parent/dir due to %v", err)
+	}
+	if len(names) != 1 || names[0] != expectedNames[0] {
+		t.Fatalf("wrong list response expected %#v, got %#v", expectedNames, names)
 	}
 }
